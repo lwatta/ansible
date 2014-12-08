@@ -1,0 +1,15 @@
+# playboot for running nova service enable or disable.
+# Requires that you source the openrc for the environment you are running against
+#
+# Run as 
+# 	ansible-playbook nova-service-play.yml --extra-vars "service={enable/disable} comment='something-smartassed'"
+#
+#
+- name: Set nova service 
+  hosts: compute
+  connection: local
+  gather_facts: no
+
+  tasks: 
+    - name: Set service to enable or disable
+      command: nova {{ service }} --reason {{ comment }} {{ inventory_hostname }} nova-compute 

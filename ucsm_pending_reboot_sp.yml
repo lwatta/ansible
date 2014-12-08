@@ -1,0 +1,9 @@
+- name: Reset Service Profile with Pending-reboot
+  hosts: nova1
+  connection: local
+  gather_facts: no
+  
+
+  tasks: 
+    - name: set service to disable
+      command: ./UCSM_check_for_pending.py -u {{ ucsm_host }}  -p {{ ucsm_password }} -n {{ inventory_hostname }}

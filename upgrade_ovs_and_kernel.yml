@@ -1,0 +1,140 @@
+---
+- hosts: "{{ target }}"
+  gather_facts: no
+  tasks:
+
+# added lwatta to automate more
+# Set nova service-disable. 
+#	You need to source openrc for the right environment before running
+
+#    - name: Set nova service-disable
+#      connection: local
+#      command: nova service-disable --reason "Down for OVS/Kernel Upgrade" {{ target }} nova-compute
+#
+# --------------
+
+# --------------
+# Here is where we need live migration
+#
+# --------------
+# Added by lwatta
+# dmidecode commands to get the UCS system and serviceprofile for
+#       resetting the SP for pending-reboot
+    - name: "DMIDECODE for UCSM system"
+      shell: dmidecode  | grep "String 4" | awk -F":" '{print $3}'
+      register: dmidecode_UCSM
+#
+    - debug: var=dmidecode_UCSM.stdout_lines
+#
+    - name: "DMIDECODE for UCSM Service Profile"
+      shell: dmidecode  | grep "String 2" | awk -F":" '{print $3}'
+      register: dmidecode_UCSM_SP
+#
+    - debug: var=dmidecode_UCSM_SP.stdout_lines
+
+# --------
+# added 11/13/2014 by lwatta
+# need to remove apt files. They are not getting updated.
+    - name: Remove broken apt file amd64_packages
+      shell: rm /var/lib/apt/lists/csx-a-infra-001_system%5frelease_dists_precise_main_binary-amd64_Packages
+
+    - name: Remove broken apt file release
+      shell: rm /var/lib/apt/lists/csx-a-infra-001_system%5frelease_dists_precise_Release
+# --------
+
+    - name: Installing Kernel to 3.11 - {{ target }}
+      apt: pkg={{ item }} state=installed update_cache=true
+      with_items:
+        - linux-image-3.11.0-26-generic
+        - linux-headers-3.11.0-26-generic
+
+    - name: Upgrade OVS Packages - {{ target }}
+      apt: pkg={{ item }} state=latest update_cache=true
+      with_items:
+        - openvswitch-common
+        - openvswitch-datapath-dkms
+        - openvswitch-switch 
+
+    - name: Shutting down - {{ target }}
+      shell: /sbin/shutdown -h now
+      async: 0
+      poll: 0
+      ignore_errors: true
+
+# Addded by lwatta
+# local script will go out to UCSM via api and do the following
+#	Check to try and find an SP that matches the host. Essentially searches on nova#-XXX
+#	Checks for pending-reboot
+#	Issues command to reboot
+#
+
+
+    - name: UCSM_check_for_pending ... finding SP and rebooting it via SDK
+      connection: local
+      shell: ./UCSM_check_for_pending.py -u {{ dmidecode_UCSM.stdout }} -p N3eDsF1xNg -n {{ dmidecode_UCSM_SP.stdout }} -e
+#      register: hello
+#    - debug: msg= "{{ hello.stdout }}"
+
+#    - debug: msg= "{{ hello.sterr }}" 
+      
+# --------------
+
+
+#    - name: 'Go to UCS and click the "reboot now" in pending activities for the service profile - {{ target }}'
+    - name: 'Waiting on UCS Service Profile to come online  - {{ target }}'
+      local_action: wait_for host={{ inventory_hostname }} port=22 search_regex=OpenSSH delay=200
+
+    - name: Rebuild OVS Kernel Module - {{ target }}
+      shell: /usr/bin/apt-get install --reinstall openvswitch-datapath-dkms
+
+    - name: Stop Nova Compute Services - {{ target }}
+      service: name={{ item }} state=stopped
+      when: "'compute' in group_names"
+      with_items:
+        - nova-compute
+        - neutron-plugin-openvswitch-agent
+
+    - name: Stop Neutron Services - {{ target }}
+      service: name={{ item }} state=stopped
+      when: "'network_controller' in group_names"
+      with_items:
+        - neutron-plugin-openvswitch-agent
+        - neutron-dhcp-agent
+        - neutron-metadata-agent
+        - neutron-l3-agent
+        - neutron-plugin-vpn-agent
+        - neutron-plugin-metering-agent
+        - neutron-lbaas-agent
+
+    - name: OVS Cleanup - {{ target }}
+      shell: /usr/bin/neutron-ovs-cleanup
+
+    - name: Start Nova Compute Services - {{ target }}
+      service: name={{ item }} state=started
+      when: "'compute' in group_names"
+      with_items:
+        - neutron-plugin-openvswitch-agent
+        - nova-compute
+
+    - name: Start neutron services - {{ target }}
+      service: name={{ item }} state=started
+      when: "'network_controller' in group_names"
+      with_items:
+        - neutron-plugin-openvswitch-agent
+        - neutron-dhcp-agent
+        - neutron-metadata-agent
+        - neutron-l3-agent
+        - neutron-plugin-metering-agent
+        - neutron-lbaas-agent
+
+# added lwatta to automate more
+# Set nova service-enable.
+#       You need to source openrc for the right environment before running
+
+#    - name: Set nova service-enable 
+#      connection: local
+#      command: nova service-enable {{ inventory-hostname }} nova-compute
+# --------------
+
+
+
